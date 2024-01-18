@@ -50,7 +50,7 @@ Java8 전에는 인터페이스에 정적 메서드를 선언할 수 없었다. 
 
 > Q. Java8 이후로는 인터페이스도 정적 메서드를 가질 수 있는데 동반 클래스(Types)가 필요한가?
 >
-> A. 둘 이유가 없지만 정적 메서드를 구현하기 위한 코드 중 많은 부분은 여전히 별도의 package-private 클래스에 두어야 할 수 있다. 자바 9에서는 private 정적 메서드까지 허락하지만 정적 필드와 정적 맴버 클래스는 여전히 public 이어야 한다. [예시](/companion_clazz/TestMain.java)
+> A. 둘 이유가 없지만 정적 메서드를 구현하기 위한 코드 중 많은 부분은 여전히 별도의 package-private 클래스에 두어야 할 수 있다. 자바 9에서는 private 정적 메서드까지 허락하지만 정적 필드와 정적 맴버 클래스는 여전히 public 이어야 한다. [예시](./companion_clazz/TestMain.java)
 
 **네번 째, 입력 매개변수에 따라 매번 다른 클래스의 객체를 반환할 수 있다.**
 
@@ -228,7 +228,7 @@ readResolve 메서드를 제공해야 한다.
 ```
 // 싱글턴임을 보장해주는 readResolve 메서드 */
 private Object readResolve() {
-  // 진짜 'Elvis 룰 반환하고, 가짜 Elvis는 가비지 컬렉터에 맡긴다.
+  // 진짜 'Elvis 를 반환하고, 가짜 Elvis는 가비지 컬렉터에 맡긴다.
   return INSTANCE;
 }
 ```
@@ -251,4 +251,107 @@ public 필드 방식과 비슷하지만, 더 간결하고 **추가적인 노력�
 
 조금 자연스러워 보일 수는 있으나 **인스턴스가 JVM 내에 하나만 존재한다는 것이 100% 보장 되므로, 대부분 상황에서는 원소가 하나뿐인 열거 타입이 싱글턴을 만드는 가장 좋은
 방법이다.**
+
+<br/>
+
+---
+<br/>
+
+## 인스턴스화를 막으려거든 private 생성자를 사용하라
+
+생성자를 명시하지 않으면 컴파일러가 자동으로 기본 생성자를 만들어준다. 즉, 매개변수를 받지 않은 public 생성자가 만들어지며, 사용자는 이 생성자가 자동 생성된 것인지 구분할
+수 없다.
+
+```java
+public class UtilityClass {
+
+  private UtilityClass() {
+    throw new AssertionError();
+  }
+  //...
+}
+```
+
+명시적 생성자가 private 로 설정하였기 때문에 클래스 바깥에서는 접근할 수 없다. 꼭 ```AssertionError```를 던질 필요는 없지만, 클래스 안에서 실수로라도
+생성자를 호출하지 않도록 해준다.
+
+<br/>
+
+---
+
+<br/>
+
+## 자원을 직접 명시하지 말고 의존 객체 주입을 사용하라
+
+많은 클래스가 하나 이상의 자원에 의존한다. 가령 맞춤법 검사기는 사전에 의존하는데, 이런 클래스를 정적 유틸리티 클래스로 구현한 모습을 드물지 않게 볼 수 있다.
+
+```java
+/* 정적 유틸리티를 잘못 사용한 예 - 유연하지 않고 테스트하기 어렵다. */
+public class SpellChecker {
+
+  private static final Lexion dictionary = ...;
+
+  private SpellChecker() {
+  }
+
+  public static boolean isValid(String word) {
+    //...
+  }
+
+  public static List<String> suggestions(String typo) {
+    //...
+  }
+}
+```
+
+```java
+/* 정적 유틸리티를 잘못 사용한 예 - 유연하지 않고 테스트하기 어렵다. */
+public class SpellChecker {
+
+  private final Lexion dictionary = ...;
+  private static SpellChecker INSTANCE = new SpellChecker(...);
+
+  private SpellChecker(...) {
+  }
+
+  public static boolean isValid(String word) {
+    //...
+  }
+
+  public static List<String> suggestions(String typo) {
+    //...
+  }
+}
+```
+
+두 방식 모두 사전을 단 하나만 사용한다고 가정한다는 점에서 그리 휼룡해 보이지 않다. 실전에서는 언어별, 특수 어휘용 사전을 별도로 두기도 한다.
+
+간단히 final 한정자를 지우고 사전을 변경하는 메서드로 구현할 수 있지만, 이 방식은 어색하고 오류를 내기 쉬우며 멀티스레드 환경에서는 쓸 수 없다. **사용하는 자원에 따라
+동작이 달라지는 클래스에는 정적 유틸리티 클래스나 싱글턴 방식이 적합하지 않다**
+
+```java
+/* 의존 객체 주입 */
+public class SpellChecker {
+
+  private final Lexicon dictionary;
+
+  // 생성자 주입
+  public SpellChecker(Lexicon dictionary) {
+    this.dictionary = Objects.requireNonNull(dictionary);
+  }
+
+  public static boolean isValid(String word) {
+    //...
+  }
+
+  public static List<String> suggestions(String typo) {
+    //...
+  }
+}
+```
+
+이 방식으로 설계할 경우 dictionary라는 딱 하나의 자원만 사용하지만, 자원이 몇 개든 의존 관계가 어떻든 상관없이 잘 동작한다. 또한 불변을 보장하여 여러 클라이언트가
+의존 객체들을 안심하고 공유할 수 있다.
+
+> 핵심 정리 : 클래스가 내부적으로 하나 이상의 자원에 의존하고, 그 자원이 클래스 동작에 영향을 준다면 싱글턴과 정적 유틸리티 클래스는 사용하지 않는 것이 좋다. 이 자원들을 클래스가 직접 만들게 해서도 안 된다. 대신 필요한 자원을 생성자에 넘겨주자. 의존 객체 주입이라 하는 이 기법은 클래스의 유연성, 재사용성, 테스트 용이성을 기막히게 개선해준다.
 
