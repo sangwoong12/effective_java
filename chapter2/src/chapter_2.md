@@ -361,8 +361,9 @@ public class SpellChecker {
 
 ## 불필요한 객체 생성을 피해라
 
-똑같은 기능의 객체를 매번 생성하기보다는 객체 하나를 재사용하는 편이 나을 때가 많다. 재사용은 빠르고 세련되다. 특히 불변 객체는 언제든 재사용할 수 있다.
+### 재사용
 
+똑같은 기능의 객체를 매번 생성하기보다는 객체 하나를 재사용하는 편이 나을 때가 많다. 재사용은 빠르고 세련되다. 특히 불변 객체는 언제든 재사용할 수 있다.
 
 ```
 /* 정규표현식 예시 */
@@ -380,12 +381,119 @@ static boolean isRomanNumeral(String s) {
 /* 재사용성을 높인 코드 */
 public class RomanNumerals {
 
+  // 클래스 초기화 단계에 미리 캐싱
   private static final Pattern ROMAN = Pattern.compile(
       "^(?=.)M*(C[MD]|D?C{0,3})"
-       + "(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})$");
+          + "(X[CL]|L?X{0,3})(I[XV]|V?I{0,3})$");
+
+  // 이후 사용할 때 마다 재사용
   static boolean isRomanNumeral(String s) {
     return ROMAN.matcher(s).matches();
   }
 }
 ```
 
+하지만, 한번도 호출하지 않는다면 쓸대없이 초기화한 꼴이된다. 메서드가 처음 호출될 때 필드를 초기화하는 지연 초기화로 불필요한 초기화를 없앨 수는 있지만, 성능이 크게 개선되지
+않을 때가 많기 때문에 권장하지 않는다.
+
+### 오토박싱
+
+오토박싱은 프로그래머가 기본 타입과 박싱된 기본 타입을 섞어 쓸 때 자동으로 상호 변환해주는 기술이다. **오토박싱은 기본 타입과 그에 대응하는 박싱된 기본 타입의 구분을
+흐려주지만, 완전히 없애주는 것은 아니다.**
+
+```
+private static long sum() {
+   Long sum = 0L; // long 아닌 Long 으로 선언
+   for (long l = 0; l <= Integer.MAX_VALUE; l++) {
+      sum += l;
+   }
+   return sum;
+}
+```
+
+sum 타입을 long 이 아닌 Long 으로 선언해서 불필요한 Long 인스턴스가 약 2^31 개가 생성되고 성능 또한 떨어지게 된다. 그렇기 떄문에 **박싱된 기본 타입보다는
+기본 타입을 사용하고, 의도치 않은 오토박싱이 숨어들지 않도록 주의해야한다.**
+
+<br/>
+
+---
+
+<br/>
+
+## 다 쓴 객체 참조를 해제하라
+
+```java
+/* 간단히 구현한 Stack */
+public class Stack {
+
+  private static final int DEFAULT_INITIAL_CAPACITY = 16;
+  private Object[] elements;
+  private int size = 0;
+
+  public Stack() {
+    elements = new Object[DEFAULT_INITIAL_CAPACITY];
+  }
+
+  public void push(Object e) {
+    ensureCapacity();
+    elements[size++] = e;
+  }
+
+  // size 를 줄여 접근은 막았지만 elements[size] 는 존재함.
+  public Object pop() {
+    if (size == 0) {
+      throw new EmptyStackException();
+    }
+    return elements[--size];
+  }
+
+  private void ensureCapacity() {
+    if (elements.length == size) {
+      elements = Arrays.copyOf(elements, 2 * size + 1);
+    }
+  }
+}
+```
+
+객체 참조 하나를 살려두면 가비지 컬렉터는 그 객체뿐 아니라 그 객체가 참조하는 모든 객체를 회수해가지 못한다. 위 코드를 보게되면 pop 메서드는 해당 참조를 지우는 것이 아닌
+사이즈를 줄이고 있다. (여전히 elements[size] 는 참조 대상)
+
+### null 처리
+
+```
+/* 제대로 구현한 pop 메서드 */
+public Object pop() {
+  if (size == 0) {
+    throw new EmptyStackException();
+  }
+  Object result = elements[--size];
+  elements[size] = null; // 다 쓴 참조 해제
+  retrun result;
+}
+```
+
+위와 같이 반환 후 더 이상 사용되지 않을 객체에 대해서 null을 대입함으로써 메모리 누수가 없는 안전한 코드를 완성할 수 있다.
+
+이렇게 함으로써 얻을 수 있는 부가적인 장점은 누군가가 악의적으로 혹은 실수로 해당 객체를 다시 사용하려 했을 때 NullPointException이 발생하며 사전에 에러를
+발생시킬 수 있다는 점이다.
+
+하지만 이렇게 일일히 null을 대입하는 것은 프로그램을 필요 이상으로 지저분하게 만들 수 있다.
+
+이러한 방법을 사용하는 경우는 위 예제 코드처럼 자기 메모리를 직접 관리하는 경우이다. 예를 들어 Stack은 특정 메모리를 사전에 할당받고 활성영역과 비활성영역을 size라는
+기준을 통해서 나눈다. 하지만 이 비활성 영역이 더이상 사용되지 않는다는 것은 개발한 프로그래머만이 아는 사실이다. 따라서 이러한 경우 null을 통해 가비지 컬렉션에게 해당
+객체가 더이상 사용되지 않는다고 알려야한다.
+
+### 유효 범위
+
+다 쓴 참조를 해제하는 가장 좋은 방법은 해당 참조를 담은 변수를 유효 범위(scope) 밖으로 밀어내는 것이다. 즉, 최대한 작은 범위를 가지는 지역변수를 사용해 해당 범위에
+대한 코드 실행이 끝나면 자연스럽게 참조는 해제되고 해당 객체는 가비지 컬렉션의 대상이 된다
+
+> 핵심 정리 : 이외에도 캐시, 리스너, 콜백함수와 같은 것들이 메모리 누수를 발생시킬 수 있다. 따라서 사용되지 않는 객체가 있다면 프로그래밍 단계에서 반드시 해제를 해주는 등의 조치를 해야 한다.
+>
+> 메모리 누수는 겉으로 잘 드러나지 않아 시스템에 수년간 잠복하는 사례도 있다. 이러한 메모리 누수는 철저한 코드 리뷰와 힙 프로파일러 같은 디버깅 도구를 동원해야 발견할 수 있다. 따라서 이와같은 예방법을 익혀두는 것이 매우 중요하다.
+
+<br/>
+
+---
+
+<br/>
